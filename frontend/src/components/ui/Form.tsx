@@ -1,4 +1,4 @@
-import { useId, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from 'react';
+import { useId, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react';
 
 interface CampoProps {
   etiqueta: string;
@@ -38,6 +38,21 @@ export function CampoArea({ etiqueta, ayuda, required, ...rest }: AreaProps) {
   return (
     <Campo etiqueta={etiqueta} ayuda={ayuda} requerido={required}>
       {(id) => <textarea id={id} className="input input--area" required={required} {...rest} />}
+    </Campo>
+  );
+}
+
+type SelectProps = SelectHTMLAttributes<HTMLSelectElement> & { etiqueta: string; ayuda?: string };
+
+/** Lista desplegable con el mismo aspecto que los demás campos. */
+export function CampoSeleccion({ etiqueta, ayuda, required, children, ...rest }: SelectProps) {
+  return (
+    <Campo etiqueta={etiqueta} ayuda={ayuda} requerido={required}>
+      {(id) => (
+        <select id={id} className="input" required={required} {...rest}>
+          {children}
+        </select>
+      )}
     </Campo>
   );
 }

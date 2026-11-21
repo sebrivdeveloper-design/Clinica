@@ -4,6 +4,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -54,6 +55,20 @@ public class CitasController {
     public List<Map<String, Object>> agendaDisponible(@AuthenticationPrincipal Jwt jwt,
             @RequestParam Long idMedico) {
         return repo.agendaDisponible(UsuarioSesion.desde(jwt), idMedico);
+    }
+
+    /** Citas pendientes del medico en sesion (fecha opcional, formato yyyy-MM-dd). */
+    @GetMapping("/citas/medico")
+    public List<Map<String, Object>> citasDelMedico(@AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha) {
+        return repo.citasDelMedico(UsuarioSesion.desde(jwt), fecha);
+    }
+
+    /** Citas de un paciente. El paciente recibe siempre las suyas; recepción/admin envían idPaciente. */
+    @GetMapping("/citas/mias")
+    public List<Map<String, Object>> misCitas(@AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) Long idPaciente) {
+        return repo.misCitas(UsuarioSesion.desde(jwt), idPaciente);
     }
 
     @PostMapping("/citas")
