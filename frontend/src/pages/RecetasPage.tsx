@@ -1,23 +1,23 @@
 import { useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ClipboardPlus, Pill } from 'lucide-react';
+import { ClipboardList, ClipboardPlus, Pill, RefreshCw } from 'lucide-react';
 import { farmaciaService } from '../services/farmaciaService';
 import { useConsulta } from '../hooks/useConsulta';
 import { useEnvio } from '../hooks/useEnvio';
 import { useToast } from '../components/ui/Toast';
-import { Card, PageHeader } from '../components/ui/Card';
+import { Badge, Card, PageHeader } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Campo, CampoTexto, FilaFormulario, enteroPositivo } from '../components/ui/Form';
 import { DataTable } from '../components/ui/DataTable';
-import { AvisoPendiente } from '../components/ui/Feedback';
+import { EstadoConsulta } from '../components/ui/Feedback';
 import { leerId } from '../utils/format';
+import type { DetalleReceta } from '../types/farmacia';
 
-interface DetalleAgregado extends Record<string, unknown> {
-  idDetalle: number | null;
-  idMedicamento: number;
-  medicamento: string;
-  cantidad: number;
-  dosis: string;
+/** Solo presentacion: el estado real lo deduce Oracle. */
+function tonoEstado(estado: string): 'exito' | 'alerta' | 'neutro' {
+  if (estado === 'Entregado') return 'exito';
+  if (estado === 'Entregado parcialmente') return 'alerta';
+  return 'neutro';
 }
 
 /** Emisión de receta para una historia clínica y prescripción de medicamentos. */
@@ -35,14 +35,22 @@ export default function RecetasPage() {
   const [idMedicamento, setIdMedicamento] = useState('');
   const [cantidad, setCantidad] = useState('');
   const [dosis, setDosis] = useState('');
-  const [agregados, setAgregados] = useState<DetalleAgregado[]>([]);
   const agregar = useEnvio(farmaciaService.agregarDetalle);
   const receta = enteroPositivo(idReceta);
   const medicamento = enteroPositivo(idMedicamento);
   const cant = enteroPositivo(cantidad);
 
+  // Receta cuyo contenido se muestra: la ultima creada o a la que se agrego un medicamento.
+  const [recetaActiva, setRecetaActiva] = useState<number | null>(null);
+  const detalles = useConsulta(recetaActiva ? (s) => farmaciaService.detalleReceta(recetaActiva, s) : null, [recetaActiva]);
+
   // Catálogo para elegir medicamento; si aún no está disponible se permite escribir el ID.
   const catalogo = useConsulta((s) => farmaciaService.medicamentos(s), []);
+
+  function mostrarReceta(id: number) {
+    if (id === recetaActiva) detalles.recargar();
+    else setRecetaActiva(id);
+  }
 
   async function crearReceta(e: FormEvent) {
     e.preventDefault();
@@ -51,8 +59,10 @@ export default function RecetasPage() {
     if (r.ok) {
       const id = leerId(r.datos, 'idReceta', 'id');
       toast.mostrar({ tipo: 'exito', titulo: 'Receta creada', mensaje: id ? `Receta Nº ${id}` : undefined });
-      if (id) setIdReceta(String(id));
-      setAgregados([]);
+      if (id) {
+        setIdReceta(String(id));
+        mostrarReceta(id);
+      }
     }
   }
 
@@ -62,14 +72,11 @@ export default function RecetasPage() {
     const r = await agregar.ejecutar(receta, { idMedicamento: medicamento, cantidad: cant, dosis: dosis.trim() });
     if (r.ok) {
       const nombre = catalogo.datos?.find((m) => m.idMedicamento === medicamento)?.nombre ?? `ID ${medicamento}`;
-      setAgregados((a) => [
-        ...a,
-        { idDetalle: leerId(r.datos, 'idDetalle', 'id'), idMedicamento: medicamento, medicamento: nombre, cantidad: cant, dosis: dosis.trim() },
-      ]);
       toast.mostrar({ tipo: 'exito', titulo: 'Medicamento agregado', mensaje: nombre });
       setIdMedicamento('');
       setCantidad('');
       setDosis('');
+      mostrarReceta(receta);
     }
   }
 
@@ -127,7 +134,7 @@ export default function RecetasPage() {
                 min={1}
                 value={idMedicamento}
                 onChange={(e) => setIdMedicamento(e.target.value)}
-                ayuda={catalogo.error?.pendiente ? 'El catálogo de medicamentos aún no está disponible.' : undefined}
+                ayuda={catalogo.error ? 'No se pudo cargar el catálogo de medicamentos; escriba el ID.' : undefined}
                 required
               />
             )}
@@ -148,19 +155,35 @@ export default function RecetasPage() {
         </Card>
       </div>
 
-      {(crear.error?.pendiente || agregar.error?.pendiente) && <AvisoPendiente compacto />}
-
-      {agregados.length > 0 && (
-        <Card titulo={`Medicamentos agregados a la receta ${idReceta}`} descripcion="Confirmados por la base de datos en esta sesión.">
-          <DataTable<DetalleAgregado>
-            filas={agregados}
-            columnas={[
-              { clave: 'idDetalle', titulo: 'Detalle' },
-              { clave: 'medicamento', titulo: 'Medicamento' },
-              { clave: 'cantidad', titulo: 'Cantidad', alinear: 'der' },
-              { clave: 'dosis', titulo: 'Dosis' },
-            ]}
-          />
+      {recetaActiva != null && (
+        <Card
+          titulo={`Medicamentos de la receta ${recetaActiva}`}
+          descripcion="Tal como están registrados en la base de datos."
+          icono={<ClipboardList size={20} />}
+          acciones={
+            <Button variante="secundario" icono={<RefreshCw size={16} />} onClick={detalles.recargar} disabled={detalles.cargando}>
+              Actualizar
+            </Button>
+          }
+        >
+          <EstadoConsulta {...detalles} textoVacio="La receta aún no tiene medicamentos. Agréguelos en el paso 2." alReintentar={detalles.recargar}>
+            {(filas) => (
+              <DataTable<DetalleReceta>
+                filas={filas}
+                claveFila={(d) => d.idDetalle}
+                columnas={[
+                  { clave: 'medicamento', titulo: 'Medicamento' },
+                  { clave: 'dosis', titulo: 'Dosis' },
+                  { clave: 'cantidad', titulo: 'Recetado', alinear: 'der' },
+                  { clave: 'cantidadEntregada', titulo: 'Entregado', alinear: 'der' },
+                  { clave: 'cantidadPendiente', titulo: 'Pendiente', alinear: 'der' },
+                  { clave: 'estado', titulo: 'Estado', render: (d) => <Badge tono={tonoEstado(d.estado)}>{d.estado}</Badge> },
+                  { clave: 'farmaceutico', titulo: 'Entregó' },
+                  { clave: 'fechaEntrega', titulo: 'Fecha de entrega' },
+                ]}
+              />
+            )}
+          </EstadoConsulta>
         </Card>
       )}
     </>
