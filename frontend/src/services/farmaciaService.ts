@@ -1,20 +1,36 @@
 import { http } from '../api/httpClient';
-import type { ResultadoOperacion } from '../types/api';
-import type { DetalleRecetaRequest, EntregaRequest, Medicamento, RecetaRequest } from '../types/farmacia';
+import type {
+  DetalleCreado,
+  DetallePendiente,
+  DetalleReceta,
+  DetalleRecetaRequest,
+  EntregaRequest,
+  EntregaResultado,
+  Medicamento,
+  RecetaCreada,
+  RecetaRequest,
+} from '../types/farmacia';
 
-/** Recetas, detalles, entregas y medicamentos. Dependen de procedimientos PL/SQL pendientes. */
+/** Recetas, detalles, entregas y medicamentos (PKG_FARMACIA). */
 export const farmaciaService = {
   /** GET /api/medicamentos */
   medicamentos: (signal?: AbortSignal) => http.get<Medicamento[]>('/api/medicamentos', { signal }),
 
+  /** GET /api/recetas/detalles-pendientes — medicamentos con cantidad por entregar (FARMACEUTICO). */
+  detallesPendientes: (signal?: AbortSignal) => http.get<DetallePendiente[]>('/api/recetas/detalles-pendientes', { signal }),
+
+  /** GET /api/recetas/{id}/detalle — medicamentos de una receta y su avance de entrega. */
+  detalleReceta: (idReceta: number, signal?: AbortSignal) =>
+    http.get<DetalleReceta[]>(`/api/recetas/${idReceta}/detalle`, { signal }),
+
   /** POST /api/recetas */
-  crearReceta: (datos: RecetaRequest) => http.post<ResultadoOperacion>('/api/recetas', datos),
+  crearReceta: (datos: RecetaRequest) => http.post<RecetaCreada>('/api/recetas', datos),
 
   /** POST /api/recetas/{id}/detalle */
   agregarDetalle: (idReceta: number, datos: DetalleRecetaRequest) =>
-    http.post<ResultadoOperacion>(`/api/recetas/${idReceta}/detalle`, datos),
+    http.post<DetalleCreado>(`/api/recetas/${idReceta}/detalle`, datos),
 
-  /** POST /api/recetas/detalle/{id}/entrega — Oracle descuenta el stock. */
+  /** POST /api/recetas/detalle/{id}/entrega — Oracle descuenta el stock y deduce los estados. */
   registrarEntrega: (idDetalle: number, datos: EntregaRequest) =>
-    http.post<ResultadoOperacion>(`/api/recetas/detalle/${idDetalle}/entrega`, datos),
+    http.post<EntregaResultado>(`/api/recetas/detalle/${idDetalle}/entrega`, datos),
 };
