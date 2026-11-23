@@ -21,7 +21,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
-/** Recetas, detalles, entregas y medicamentos. Stock y estados los maneja Oracle. */
+/** Recetas, detalles, entregas y medicamentos. Stock y estados los maneja Oracle (PKG_FARMACIA). */
 @RestController
 @RequestMapping("/api")
 public class FarmaciaController {
@@ -44,12 +44,14 @@ public class FarmaciaController {
         this.repo = repo;
     }
 
+    /** MEDICO: crea la receta de una historia clinica. Responde {idReceta}. */
     @PostMapping("/recetas")
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> crearReceta(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody RecetaRequest req) {
         return repo.crearReceta(UsuarioSesion.desde(jwt), req);
     }
 
+    /** MEDICO: agrega un medicamento a la receta. Responde {idDetalle}. */
     @PostMapping("/recetas/{id}/detalle")
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> agregarDetalle(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
@@ -57,6 +59,7 @@ public class FarmaciaController {
         return repo.agregarDetalle(UsuarioSesion.desde(jwt), id, req);
     }
 
+    /** FARMACEUTICO: entrega total o parcial. Responde {cantidadPendiente, estadoDetalle, estadoReceta}. */
     @PostMapping("/recetas/detalle/{id}/entrega")
     public Map<String, Object> registrarEntrega(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id,
             @Valid @RequestBody EntregaRequest req) {
@@ -66,5 +69,17 @@ public class FarmaciaController {
     @GetMapping("/medicamentos")
     public List<Map<String, Object>> medicamentos(@AuthenticationPrincipal Jwt jwt) {
         return repo.medicamentos(UsuarioSesion.desde(jwt));
+    }
+
+    /** FARMACEUTICO: medicamentos recetados que aun tienen cantidad pendiente de entregar. */
+    @GetMapping("/recetas/detalles-pendientes")
+    public List<Map<String, Object>> detallesPendientes(@AuthenticationPrincipal Jwt jwt) {
+        return repo.detallesPendientes(UsuarioSesion.desde(jwt));
+    }
+
+    /** MEDICO (dueno de la receta) o FARMACEUTICO: medicamentos de una receta con su avance de entrega. */
+    @GetMapping("/recetas/{id}/detalle")
+    public List<Map<String, Object>> detalleReceta(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id) {
+        return repo.detalleReceta(UsuarioSesion.desde(jwt), id);
     }
 }
