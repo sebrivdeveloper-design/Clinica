@@ -29,19 +29,6 @@ export interface CancelacionMasivaRequest {
   observacion?: string;
 }
 
-/** Cita pendiente del médico en sesión (PRO_CITAS_MEDICO). */
-export interface CitaMedico {
-  idCita: number;
-  idAgenda: number;
-  fechaHoraInicio: string;
-  fechaHoraFin: string;
-  idPaciente: number;
-  documento: string;
-  paciente: string;
-  tieneHistoria: 'S' | 'N';
-  [extra: string]: unknown;
-}
-
 export interface MedicoResumen {
   idMedico: number;
   documento: string;

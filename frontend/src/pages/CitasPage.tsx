@@ -53,7 +53,7 @@ function ReservarCita() {
 
   const [idMedico, setIdMedico] = useState(params.get('idMedico') ?? '');
   const [idAgenda, setIdAgenda] = useState(params.get('idAgenda') ?? '');
-  // El paciente reserva a su nombre; recepción y administrador eligen; el médico indica el paciente por su número.
+  // El paciente reserva a su nombre; recepción y administrador eligen el paciente de una lista.
   const [idPaciente, setIdPaciente] = useState(esPaciente && sesion.idEntidad != null ? String(sesion.idEntidad) : '');
   const [observacion, setObservacion] = useState('');
   const envio = useEnvio(citasService.reservar);
@@ -137,18 +137,6 @@ function ReservarCita() {
             ))}
           </CampoSeleccion>
         )}
-        {!esPaciente && !eligePaciente && (
-          <CampoTexto
-            etiqueta="ID del paciente"
-            type="number"
-            min={1}
-            value={idPaciente}
-            onChange={(e) => setIdPaciente(e.target.value)}
-            ayuda="Número de registro del paciente."
-            required
-          />
-        )}
-
         <CampoArea etiqueta="Observación" maxLength={500} rows={3} value={observacion} onChange={(e) => setObservacion(e.target.value)} />
         <div className="form__acciones">
           <Button type="submit" cargando={envio.enviando} disabled={paciente == null || agenda == null}>

@@ -15,8 +15,8 @@ export default function AgendaPage() {
   const sesion = useSesion();
   const navigate = useNavigate();
   const esMedico = sesion.rol === 'MEDICO';
-  // Todos los roles con acceso a la agenda pueden reservar desde un bloque libre.
-  const puedeReservar = ['ADMINISTRADOR', 'RECEPCIONISTA', 'MEDICO', 'PACIENTE'].includes(sesion.rol);
+  // Reservan los mismos roles que Citas (HU01): paciente y recepcionista, además del administrador.
+  const puedeReservar = ['ADMINISTRADOR', 'RECEPCIONISTA', 'PACIENTE'].includes(sesion.rol);
 
   // El médico consulta su propia agenda; los demás roles eligen el médico por nombre.
   const [idMedico, setIdMedico] = useState<number | null>(esMedico ? sesion.idEntidad : null);

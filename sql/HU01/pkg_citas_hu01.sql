@@ -10,9 +10,6 @@
          -> GET /api/agenda/disponible?idMedico=
      - PRO_RESERVAR_CITA     : reserva con bloqueo pesimista
          -> POST /api/citas  { idPaciente, idAgenda, observacion? }
-     - PRO_CITAS_MEDICO      : citas pendientes del medico en sesion para un
-         dia (pantalla "Registrar consulta", sin digitar el numero de cita)
-         -> GET /api/citas/medico?fecha=yyyy-MM-dd
      - PRO_LISTAR_MEDICOS    : medicos con su especialidad (para elegir en
          la agenda sin digitar ids)           -> GET /api/medicos
      - PRO_LISTAR_PACIENTES  : pacientes (solo ADMIN y RECEPCIONISTA)
@@ -50,14 +47,6 @@ CREATE OR REPLACE PACKAGE PKG_CITAS AS
                               vn_id_agenda   IN  NUMBER,
                               va_observacion IN  VARCHAR2,
                               vn_id_cita     OUT NUMBER);
-
-  /* Citas PENDIENTES del medico en sesion para un dia (si vd_fecha es NULL
-     usa la fecha de referencia del sistema). Siempre filtra por el id del
-     medico del contexto, asi nunca ve citas de otro medico.
-     Columnas: ID_CITA, ID_AGENDA, FECHA_HORA_INICIO, FECHA_HORA_FIN,
-     ID_PACIENTE, DOCUMENTO, PACIENTE, TIENE_HISTORIA ('S'/'N'). */
-  PROCEDURE PRO_CITAS_MEDICO(vd_fecha IN  DATE,
-                             vc_citas OUT SYS_REFCURSOR);
 
   /* Medicos con su especialidad. Columnas: ID_MEDICO, DOCUMENTO, NOMBRE,
      ESPECIALIDAD. Lo ven ADMIN, RECEPCIONISTA, PACIENTE y MEDICO. */
@@ -155,12 +144,12 @@ CREATE OR REPLACE PACKAGE BODY PKG_CITAS AS
 
   BEGIN
     ----------------------------------------------------------------
-    -- 1. Permisos: reservan ADMINISTRADOR, RECEPCIONISTA, MEDICO y PACIENTE.
+    -- 1. Permisos: reservan RECEPCIONISTA, PACIENTE y ADMINISTRADOR.
     --    Solo el paciente esta limitado a reservar a su propio nombre.
-    --    El FARMACEUTICO no agenda citas.
+    --    MEDICO y FARMACEUTICO no agendan citas.
     ----------------------------------------------------------------
     IF PKG_CONTEXTO.FN_id_usuario IS NULL
-       OR NVL(va_rol, '?') NOT IN ('ADMINISTRADOR', 'RECEPCIONISTA', 'MEDICO', 'PACIENTE') THEN
+       OR NVL(va_rol, '?') NOT IN ('ADMINISTRADOR', 'RECEPCIONISTA', 'PACIENTE') THEN
       RAISE_APPLICATION_ERROR(-20005, 'No tiene permiso para reservar citas');
     END IF;
 
@@ -233,8 +222,10 @@ CREATE OR REPLACE PACKAGE BODY PKG_CITAS AS
     SET    ID_ESTADO = vn_ocupada
     WHERE  ID_AGENDA = vn_id_agenda;
 
-    INSERT INTO TBL_CITAS_MEDICAS (ID_PACIENTE, ID_AGENDA, ID_ESTADO)
-    VALUES (vn_id_paciente, vn_id_agenda, vn_pendiente)
+    -- FECHA_REGISTRO se envia explicita con la fecha de referencia del
+    -- sistema (igual criterio que la validacion del paso 5), no con SYSDATE.
+    INSERT INTO TBL_CITAS_MEDICAS (ID_PACIENTE, ID_AGENDA, ID_ESTADO, FECHA_REGISTRO)
+    VALUES (vn_id_paciente, vn_id_agenda, vn_pendiente, vd_hoy)
     RETURNING ID_CITA INTO vn_id_cita;
 
     ----------------------------------------------------------------
@@ -261,46 +252,6 @@ CREATE OR REPLACE PACKAGE BODY PKG_CITAS AS
       ROLLBACK;   -- libera el bloqueo y deja la conexion limpia
       RAISE;      -- conserva el codigo -200xx original
   END PRO_RESERVAR_CITA;
-
-  ---------------------------------------------------------------------
-  -- PRO_CITAS_MEDICO
-  ---------------------------------------------------------------------
-  PROCEDURE PRO_CITAS_MEDICO(vd_fecha IN  DATE,
-                             vc_citas OUT SYS_REFCURSOR) IS
-
-    vn_pendiente  NUMBER := PKG_CONSTANTES.cita_pendiente;
-    vd_dia        DATE   := TRUNC(NVL(vd_fecha, PKG_CONSTANTES.fecha_sistema));
-
-  BEGIN
-    -- Solo el medico; y debe tener su id de medico en el contexto
-    IF PKG_CONTEXTO.FN_id_usuario IS NULL
-       OR NVL(PKG_CONTEXTO.FN_rol, '?') <> 'MEDICO'
-       OR PKG_CONTEXTO.FN_id_entidad IS NULL THEN
-      RAISE_APPLICATION_ERROR(-20005, 'Solo un medico puede consultar sus citas del dia');
-    END IF;
-
-    OPEN vc_citas FOR
-      SELECT c.ID_CITA,
-             a.ID_AGENDA,
-             a.FECHA_HORA_INICIO,
-             a.FECHA_HORA_FIN,
-             p.ID_PACIENTE,
-             p.DOCUMENTO,
-             p.NOMBRE || ' ' || p.APELLIDO AS PACIENTE,
-             CASE WHEN EXISTS (SELECT 1 FROM TBL_HISTORIA_CLINICA h
-                               WHERE  h.ID_CITA = c.ID_CITA)
-                  THEN 'S' ELSE 'N' END AS TIENE_HISTORIA
-      FROM   TBL_CITAS_MEDICAS c
-      JOIN   TBL_AGENDA_MEDICO a ON a.ID_AGENDA   = c.ID_AGENDA
-      JOIN   TBL_PACIENTES     p ON p.ID_PACIENTE = c.ID_PACIENTE
-      WHERE  a.ID_MEDICO          = PKG_CONTEXTO.FN_id_entidad
-      AND    c.ID_ESTADO          = vn_pendiente
-      AND    a.FECHA_HORA_INICIO >= vd_dia
-      AND    a.FECHA_HORA_INICIO <  vd_dia + 1
-      ORDER  BY a.FECHA_HORA_INICIO;
-
-    -- Solo lectura: no hay COMMIT.
-  END PRO_CITAS_MEDICO;
 
   ---------------------------------------------------------------------
   -- PRO_LISTAR_MEDICOS
@@ -486,19 +437,7 @@ END;
    --------------------------------------------------------------------- */
 
 /* ---------------------------------------------------------------------
-   V4. Citas del dia de un medico. Cambiar 1 por un ID_MEDICO real.
-   Esperado: filas con paciente y hora (o ninguna si ese dia no hay citas).
-   --------------------------------------------------------------------- */
-VAR c REFCURSOR
-BEGIN
-  PKG_CONTEXTO.SET_USUARIO(1, 'MEDICO', 1);
-  PKG_CITAS.PRO_CITAS_MEDICO(NULL, :c);
-END;
-/
-PRINT c
-
-/* ---------------------------------------------------------------------
-   V5. Listados de apoyo (esperado: filas en cada uno)
+   V4. Listados de apoyo (esperado: filas en cada uno)
    --------------------------------------------------------------------- */
 VAR cm REFCURSOR
 VAR cp REFCURSOR

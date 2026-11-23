@@ -2,7 +2,6 @@ import { http } from '../api/httpClient';
 import type { ResultadoOperacion } from '../types/api';
 import type {
   BloqueAgenda,
-  CitaMedico,
   CitaPaciente,
   MedicoResumen,
   PacienteResumen,
@@ -19,10 +18,6 @@ export const citasService = {
   /** GET /api/agenda/disponible?idMedico= */
   agendaDisponible: (idMedico: number, signal?: AbortSignal) =>
     http.get<BloqueAgenda[]>('/api/agenda/disponible', { query: { idMedico }, signal }),
-
-  /** GET /api/citas/medico?fecha= — citas pendientes del médico en sesión (fecha: yyyy-MM-dd). */
-  citasDelMedico: (fecha: string, signal?: AbortSignal) =>
-    http.get<CitaMedico[]>('/api/citas/medico', { query: { fecha }, signal }),
 
   /** GET /api/medicos — médicos con especialidad (para elegir sin digitar ids). */
   medicos: (signal?: AbortSignal) => http.get<MedicoResumen[]>('/api/medicos', { signal }),
