@@ -74,7 +74,7 @@ public class GlobalExceptionHandler {
             case 20006 -> HttpStatus.UNAUTHORIZED;          // Credenciales inválidas
             case 20005 -> HttpStatus.FORBIDDEN;             // Sin permiso
             case 20002 -> HttpStatus.NOT_FOUND;             // Registro no encontrado
-            case 20001, 20003, 20004, 20007 -> HttpStatus.CONFLICT;
+            case 20001, 20003, 20004, 20007, 20060 -> HttpStatus.CONFLICT;
             default -> HttpStatus.UNPROCESSABLE_CONTENT;
         };
     }
