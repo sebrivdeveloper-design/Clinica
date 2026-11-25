@@ -238,11 +238,12 @@ function CancelarCita() {
       >
         <CampoTexto etiqueta="Número de cita" type="number" min={1} value={idCita} onChange={(e) => setIdCita(e.target.value)} required />
         <CampoArea
-          etiqueta="Motivo / observación"
-          maxLength={500}
+          etiqueta="Motivo de la cancelación"
+          maxLength={490}
           rows={3}
           value={observacion}
           onChange={(e) => setObservacion(e.target.value)}
+          required
         />
         <div className="form__acciones">
           <Button type="submit" variante="peligro" disabled={cita == null}>

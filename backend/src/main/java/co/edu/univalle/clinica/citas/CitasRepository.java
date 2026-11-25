@@ -22,7 +22,8 @@ import oracle.jdbc.OracleTypes;
  * El contexto del usuario ya queda establecido (PKG_CONTEXTO) dentro de cada bloque.
  *
  * HU01 conectada: agendaDisponible, reservar y misCitas (PKG_CITAS).
- * PENDIENTE (HU02 y HU09): cancelar y cancelacionMasiva.
+ * HU02 conectada: cancelar (PKG_CITAS.PRO_CANCELAR_CITA).
+ * PENDIENTE (HU09): cancelacionMasiva.
  */
 @Repository
 public class CitasRepository {
@@ -83,10 +84,23 @@ public class CitasRepository {
         });
     }
 
+    /**
+     * PKG_CITAS.PRO_CANCELAR_CITA(idCita, motivo) (HU02). Oracle valida permisos, que la cita esté
+     * Pendiente y que el motivo no esté vacío; el origen (Paciente/Clinica) lo deduce del rol.
+     * El COMMIT lo hace Oracle.
+     */
     public Map<String, Object> cancelar(UsuarioSesion u, Long idCita, String observacion) {
         return contexto.ejecutar(u, con -> {
-            // Procedimiento pendiente (HU02): cancelar cita (idCita, observacion).
-            throw new OperacionPendienteException("Cancelar cita");
+            try (CallableStatement cs = con.prepareCall("{call PKG_CITAS.PRO_CANCELAR_CITA(?, ?)}")) {
+                cs.setLong(1, idCita);
+                if (observacion == null) {
+                    cs.setNull(2, Types.VARCHAR);
+                } else {
+                    cs.setString(2, observacion);
+                }
+                cs.execute();
+                return Map.of("idCita", idCita);
+            }
         });
     }
 

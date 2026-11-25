@@ -16,6 +16,7 @@
      PRO_MIS_CITAS                 citas del paciente (usa HORA_INICIO/FIN reales)
      PRO_LISTAR_MEDICOS            catalogo (GET /api/medicos)
      PRO_LISTAR_PACIENTES          catalogo (GET /api/pacientes)
+     PRO_CANCELAR_CITA   (HU02)    valida permisos y delega en PRC_CANCELAR_CITA
 
    Codigos de error: alineados con GlobalExceptionHandler del backend
      -20001 conflicto/ocupado (409)   -20002 no encontrado (404)
@@ -23,6 +24,10 @@
      -20008 horario/hora invalida (422)  -20009 paciente con otra cita (422)
    (-20006 se reservaba para credenciales invalidas -> HTTP 401, por eso
     "cita no existe" ya no usa -20006.)
+   HU02 (cancelacion) usa los mismos codigos comunes (-20001, -20002,
+   -20005, -20007) y los suyos propios (todos -> HTTP 422):
+     -20020 origen invalido   -20021 motivo vacio
+     -20022 motivo muy largo  -20023 la cita no se pudo actualizar
    ===================================================================== */
 
 CREATE OR REPLACE PACKAGE PROYECTOPLSQL.PKG_CITAS AS
@@ -91,6 +96,25 @@ CREATE OR REPLACE PACKAGE PROYECTOPLSQL.PKG_CITAS AS
      FECHA_HORA_FIN, ID_MEDICO, MEDICO, ESPECIALIDAD, ESTADO, PUEDE_CANCELAR */
   PROCEDURE PRO_MIS_CITAS(vn_id_paciente IN  NUMBER,
                           vc_citas       OUT SYS_REFCURSOR);
+
+  -- ===== INICIO HU02 (Sofia) =====
+  /* Cancela una cita Pendiente y libera su franja dentro del turno.
+     Uso interno y para otras HU (la HU09 la podra reutilizar).
+     vn_id_cita : cita a cancelar
+     va_origen  : 'Paciente' o 'Clinica' (quien cancela)
+     va_motivo  : se guarda en OBSERVACION como "<origen>: <motivo>"
+     vn_commit  : 1 = hace COMMIT/ROLLBACK aqui; 0 = lo hace quien llama */
+  PROCEDURE PRC_CANCELAR_CITA(vn_id_cita IN NUMBER,
+                              va_origen  IN VARCHAR2,
+                              va_motivo  IN VARCHAR2,
+                              vn_commit  IN NUMBER DEFAULT 1);
+
+  /* PUT /api/citas/{id}/cancelar
+     El origen sale del rol del usuario (PKG_CONTEXTO): un PACIENTE
+     cancela como 'Paciente'; ADMINISTRADOR y RECEPCIONISTA como 'Clinica'. */
+  PROCEDURE PRO_CANCELAR_CITA(vn_id_cita IN NUMBER,
+                              va_motivo  IN VARCHAR2);
+  -- ===== FIN HU02 =====
 
 END PKG_CITAS;
 /
@@ -499,6 +523,185 @@ CREATE OR REPLACE PACKAGE BODY PROYECTOPLSQL.PKG_CITAS AS
       WHERE  c.ID_PACIENTE = vn_paciente
       ORDER  BY c.HORA_INICIO DESC;
   END PRO_MIS_CITAS;
+
+  -- ===== INICIO HU02 (Sofia) =====
+  ---------------------------------------------------------------------
+  -- PRC_CANCELAR_CITA: cancela una cita Pendiente y libera su franja.
+  -- Con la agenda por turnos, un turno tiene varias citas: al cancelar
+  -- NO se pone el turno en Libre a ciegas, se recalcula su estado con
+  -- PRC_SINCRONIZAR_ESTADO_AGENDA (de la HU01): si estaba Ocupado pasa
+  -- a Libre porque ahora queda una franja; si esta En cirugia no se toca.
+  ---------------------------------------------------------------------
+  PROCEDURE PRC_CANCELAR_CITA(vn_id_cita IN NUMBER,
+                              va_origen  IN VARCHAR2,
+                              va_motivo  IN VARCHAR2,
+                              vn_commit  IN NUMBER DEFAULT 1) IS
+
+    -- Variables de trabajo
+    vn_id_agenda     TBL_CITAS_MEDICAS.ID_AGENDA%TYPE;
+    vn_dummy         NUMBER;
+    va_estado_cita   TBL_PARAMETROS.ID_TIPO%TYPE;    -- C1, C2 o C3
+    va_estado_valor  TBL_PARAMETROS.VALOR%TYPE;      -- Pendiente, Cancelada...
+    va_origen_ok     VARCHAR2(20);
+    va_motivo_ok     VARCHAR2(4000);
+    va_observacion   VARCHAR2(4000);
+
+    -- ORA-30006: se acabo el tiempo de espera del FOR UPDATE WAIT
+    e_bloqueado EXCEPTION;
+    PRAGMA EXCEPTION_INIT(e_bloqueado, -30006);
+  BEGIN
+    ----------------------------------------------------------------
+    -- 1. Validar los datos de entrada (antes de tocar la base)
+    ----------------------------------------------------------------
+    va_origen_ok := INITCAP(TRIM(va_origen));
+    IF va_origen_ok IS NULL OR va_origen_ok NOT IN ('Paciente', 'Clinica') THEN
+      RAISE_APPLICATION_ERROR(-20020,
+        'El origen de la cancelacion debe ser Paciente o Clinica');
+    END IF;
+
+    va_motivo_ok := TRIM(va_motivo);
+    IF va_motivo_ok IS NULL THEN
+      RAISE_APPLICATION_ERROR(-20021,
+        'El motivo de la cancelacion es obligatorio');
+    END IF;
+
+    -- OBSERVACION es VARCHAR2(500): se mide en bytes por las tildes
+    va_observacion := va_origen_ok || ': ' || va_motivo_ok;
+    IF LENGTHB(va_observacion) > 500 THEN
+      RAISE_APPLICATION_ERROR(-20022,
+        'El motivo es demasiado largo (maximo 500 caracteres con el origen)');
+    END IF;
+
+    ----------------------------------------------------------------
+    -- 2. Buscar el turno (agenda) de la cita, todavia sin bloquear
+    ----------------------------------------------------------------
+    BEGIN
+      SELECT ID_AGENDA
+        INTO vn_id_agenda
+        FROM TBL_CITAS_MEDICAS
+       WHERE ID_CITA = vn_id_cita;
+    EXCEPTION
+      WHEN NO_DATA_FOUND THEN
+        RAISE_APPLICATION_ERROR(-20002, 'La cita ' || vn_id_cita || ' no existe');
+    END;
+
+    ----------------------------------------------------------------
+    -- 3. Bloqueo pesimista: PRIMERO el turno y DESPUES la cita.
+    --    Es el mismo orden de la HU01 (que bloquea el turno antes de
+    --    insertar la cita), asi dos sesiones nunca se esperan en orden
+    --    contrario (evita el deadlock). WAIT 10 = espera maximo 10 s.
+    --    Los bloqueos duran hasta el COMMIT o el ROLLBACK.
+    ----------------------------------------------------------------
+    BEGIN
+      SELECT ID_AGENDA
+        INTO vn_dummy
+        FROM TBL_AGENDA_MEDICO
+       WHERE ID_AGENDA = vn_id_agenda
+         FOR UPDATE WAIT 10;
+    EXCEPTION
+      WHEN e_bloqueado THEN
+        RAISE_APPLICATION_ERROR(-20001,
+          'El turno de la cita esta siendo modificado por otro usuario; intente de nuevo');
+    END;
+
+    BEGIN
+      SELECT P.ID_TIPO, P.VALOR
+        INTO va_estado_cita, va_estado_valor
+        FROM TBL_CITAS_MEDICAS C
+        JOIN TBL_PARAMETROS    P ON P.ID_PARAM = C.ID_ESTADO
+       WHERE C.ID_CITA = vn_id_cita
+         FOR UPDATE OF C.ID_ESTADO WAIT 10;
+    EXCEPTION
+      WHEN NO_DATA_FOUND THEN
+        RAISE_APPLICATION_ERROR(-20002, 'La cita ' || vn_id_cita || ' no existe');
+      WHEN e_bloqueado THEN
+        RAISE_APPLICATION_ERROR(-20001,
+          'La cita esta siendo modificada por otro usuario; intente de nuevo');
+    END;
+
+    ----------------------------------------------------------------
+    -- 4. Solo se cancela una cita Pendiente (C1). El estado se lee
+    --    DESPUES del bloqueo, por si otra sesion la cambio mientras
+    --    esperabamos (por ejemplo, el medico la finalizo).
+    ----------------------------------------------------------------
+    IF va_estado_cita <> 'C1' THEN
+      RAISE_APPLICATION_ERROR(-20007,
+        'La cita ' || vn_id_cita || ' esta ' || va_estado_valor ||
+        ' y solo se pueden cancelar citas Pendientes');
+    END IF;
+
+    ----------------------------------------------------------------
+    -- 5. Cancelar la cita guardando el motivo
+    ----------------------------------------------------------------
+    UPDATE TBL_CITAS_MEDICAS
+       SET ID_ESTADO   = PKG_CONSTANTES.cita_cancelada,
+           OBSERVACION = va_observacion
+     WHERE ID_CITA   = vn_id_cita
+       AND ID_ESTADO = PKG_CONSTANTES.cita_pendiente;
+
+    IF SQL%ROWCOUNT <> 1 THEN
+      RAISE_APPLICATION_ERROR(-20023,
+        'No se pudo cancelar la cita ' || vn_id_cita);
+    END IF;
+
+    ----------------------------------------------------------------
+    -- 6. Liberar la franja: recalcular el estado del turno
+    --    (reutiliza el procedimiento de la HU01)
+    ----------------------------------------------------------------
+    PRC_SINCRONIZAR_ESTADO_AGENDA(vn_id_agenda);
+
+    IF vn_commit = 1 THEN
+      COMMIT;   -- guarda todo junto y suelta los bloqueos
+    END IF;
+
+    DBMS_OUTPUT.PUT_LINE('Cita cancelada: ' || vn_id_cita ||
+                         ' (turno ' || vn_id_agenda || ')');
+  EXCEPTION
+    WHEN OTHERS THEN
+      IF vn_commit = 1 THEN
+        ROLLBACK;   -- deshace cambios a medias y suelta los bloqueos
+      END IF;
+      DBMS_OUTPUT.PUT_LINE('Error: ' || SQLERRM);
+      RAISE;        -- el mismo error sigue hasta el backend
+  END PRC_CANCELAR_CITA;
+
+  ---------------------------------------------------------------------
+  -- PRO_CANCELAR_CITA  (PUT /api/citas/{id}/cancelar)
+  -- Permisos: ADMINISTRADOR y RECEPCIONISTA cancelan cualquier cita;
+  -- un PACIENTE solo las suyas. MEDICO y FARMACEUTICO no cancelan.
+  ---------------------------------------------------------------------
+  PROCEDURE PRO_CANCELAR_CITA(vn_id_cita IN NUMBER,
+                              va_motivo  IN VARCHAR2) IS
+    va_rol       VARCHAR2(50) := PKG_CONTEXTO.FN_rol;
+    vn_paciente  TBL_CITAS_MEDICAS.ID_PACIENTE%TYPE;
+    va_origen    VARCHAR2(20);
+  BEGIN
+    IF PKG_CONTEXTO.FN_id_usuario IS NULL
+       OR NVL(va_rol, '?') NOT IN ('ADMINISTRADOR', 'RECEPCIONISTA', 'PACIENTE') THEN
+      RAISE_APPLICATION_ERROR(-20005, 'No tiene permiso para cancelar citas');
+    END IF;
+
+    IF va_rol = 'PACIENTE' THEN
+      BEGIN
+        SELECT ID_PACIENTE INTO vn_paciente
+          FROM TBL_CITAS_MEDICAS
+         WHERE ID_CITA = vn_id_cita;
+      EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+          RAISE_APPLICATION_ERROR(-20002, 'La cita ' || vn_id_cita || ' no existe');
+      END;
+
+      IF vn_paciente <> NVL(PKG_CONTEXTO.FN_id_entidad, -1) THEN
+        RAISE_APPLICATION_ERROR(-20005, 'Un paciente solo puede cancelar sus propias citas');
+      END IF;
+      va_origen := 'Paciente';
+    ELSE
+      va_origen := 'Clinica';
+    END IF;
+
+    PRC_CANCELAR_CITA(vn_id_cita, va_origen, va_motivo);
+  END PRO_CANCELAR_CITA;
+  -- ===== FIN HU02 =====
 
 END PKG_CITAS;
 /
