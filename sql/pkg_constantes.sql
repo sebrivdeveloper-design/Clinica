@@ -29,7 +29,7 @@ CREATE OR REPLACE PACKAGE PKG_CONSTANTES AS
   FUNCTION detalle_parcial      RETURN NUMBER;  -- D2
   FUNCTION detalle_entregado    RETURN NUMBER;  -- D3
   -- Fecha de referencia del sistema (condicion del profesor)
-  FUNCTION fecha_sistema        RETURN DATE;    -- 03/11/2026
+  FUNCTION fecha_sistema        RETURN DATE;    -- 30/04/2026
 END PKG_CONSTANTES;
 /
 
@@ -59,14 +59,15 @@ CREATE OR REPLACE PACKAGE BODY PKG_CONSTANTES AS
   FUNCTION detalle_parcial      RETURN NUMBER IS BEGIN RETURN id_param('D2'); END;
   FUNCTION detalle_entregado    RETURN NUMBER IS BEGIN RETURN id_param('D3'); END;
 
-  FUNCTION fecha_sistema        RETURN DATE IS BEGIN RETURN DATE '2026-11-03'; END;
+  FUNCTION fecha_sistema        RETURN DATE IS BEGIN RETURN DATE '2026-04-30'; END;
 
 END PKG_CONSTANTES;
 /
 
 /* ---------------------------------------------------------------------
    VERIFICACION
-   Esperado con los datos cargados: 1, 2, 3, 10, 11, 12 y fecha 03/11/2026
+   Esperado con los datos cargados: 1, 2, 3, 10, 11, 12 y fecha 30/04/2026
+   (fecha de referencia del escenario desde el reseteo por turnos del 24/11/2026)
    Si el paquete queda con errores: SHOW ERRORS PACKAGE BODY PKG_CONSTANTES
    --------------------------------------------------------------------- */
 SELECT PKG_CONSTANTES.cita_pendiente   AS C1,
