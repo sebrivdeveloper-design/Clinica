@@ -1,23 +1,29 @@
 import { useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { CalendarPlus, CalendarX, CalendarX2 } from 'lucide-react';
+import { CalendarCheck, CalendarPlus, CalendarX, CalendarX2 } from 'lucide-react';
 import { useSesion } from '../auth/AuthContext';
 import { citasService } from '../services/citasService';
+import { useConsulta } from '../hooks/useConsulta';
 import { useEnvio } from '../hooks/useEnvio';
 import { useToast } from '../components/ui/Toast';
-import { Card, PageHeader } from '../components/ui/Card';
+import { Badge, Card, PageHeader } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
-import { CampoArea, CampoTexto, FilaFormulario, enteroPositivo } from '../components/ui/Form';
+import { CampoArea, CampoSeleccion, CampoTexto, FilaFormulario, enteroPositivo } from '../components/ui/Form';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { DataTable } from '../components/ui/DataTable';
+import { EstadoConsulta } from '../components/ui/Feedback';
 import { Tabs, type Pestana } from '../components/ui/Tabs';
-import { leerId } from '../utils/format';
+import { formatearFecha, leerId } from '../utils/format';
+import type { CitaPaciente } from '../types/citas';
 
 export default function CitasPage() {
   const sesion = useSesion();
-  const esRecepcion = sesion.rol === 'RECEPCIONISTA';
+  const gestionaCitas = sesion.rol === 'RECEPCIONISTA' || sesion.rol === 'ADMINISTRADOR';
+  const veCitasDePaciente = gestionaCitas || sesion.rol === 'PACIENTE';
   const pestanas: Pestana[] = [
     { id: 'reservar', etiqueta: 'Reservar', icono: <CalendarPlus size={16} /> },
-    ...(esRecepcion
+    ...(veCitasDePaciente ? [{ id: 'mias', etiqueta: sesion.rol === 'PACIENTE' ? 'Mis citas' : 'Citas de un paciente', icono: <CalendarCheck size={16} /> }] : []),
+    ...(gestionaCitas
       ? [
           { id: 'cancelar', etiqueta: 'Cancelar', icono: <CalendarX size={16} /> },
           { id: 'masiva', etiqueta: 'Cancelación masiva', icono: <CalendarX2 size={16} /> },
@@ -31,8 +37,9 @@ export default function CitasPage() {
       <PageHeader titulo="Citas" descripcion="La disponibilidad y las reglas de cada operación las valida la base de datos." />
       {pestanas.length > 1 && <Tabs pestanas={pestanas} activa={activa} alCambiar={setActiva} />}
       {activa === 'reservar' && <ReservarCita />}
-      {activa === 'cancelar' && esRecepcion && <CancelarCita />}
-      {activa === 'masiva' && esRecepcion && <CancelacionMasiva />}
+      {activa === 'mias' && veCitasDePaciente && <MisCitas />}
+      {activa === 'cancelar' && gestionaCitas && <CancelarCita />}
+      {activa === 'masiva' && gestionaCitas && <CancelacionMasiva />}
     </>
   );
 }
@@ -42,64 +49,161 @@ function ReservarCita() {
   const toast = useToast();
   const [params] = useSearchParams();
   const esPaciente = sesion.rol === 'PACIENTE';
+  const eligePaciente = sesion.rol === 'ADMINISTRADOR' || sesion.rol === 'RECEPCIONISTA';
 
+  const [idMedico, setIdMedico] = useState(params.get('idMedico') ?? '');
+  // Cada franja libre se identifica por turno + hora de inicio: "idAgenda|yyyy-MM-ddTHH:mm:ss"
+  const [franja, setFranja] = useState(
+    params.get('idAgenda') && params.get('horaInicio') ? `${params.get('idAgenda')}|${params.get('horaInicio')}` : '',
+  );
+  // El paciente reserva a su nombre; recepción y administrador eligen el paciente de una lista.
   const [idPaciente, setIdPaciente] = useState(esPaciente && sesion.idEntidad != null ? String(sesion.idEntidad) : '');
-  const [idAgenda, setIdAgenda] = useState(params.get('idAgenda') ?? '');
   const [observacion, setObservacion] = useState('');
   const envio = useEnvio(citasService.reservar);
 
+  const medicoNum = enteroPositivo(idMedico);
   const paciente = enteroPositivo(idPaciente);
-  const agenda = enteroPositivo(idAgenda);
+  const [idAgendaTxt, horaInicio] = franja.split('|');
+  const agenda = enteroPositivo(idAgendaTxt ?? '');
+
+  const medicos = useConsulta((s) => citasService.medicos(s), []);
+  const bloques = useConsulta(medicoNum != null ? (s) => citasService.agendaDisponible(medicoNum, s) : null, [medicoNum]);
+  const pacientes = useConsulta(eligePaciente ? (s) => citasService.pacientes(s) : null, [eligePaciente]);
 
   async function enviar(e: FormEvent) {
     e.preventDefault();
     if (paciente == null || agenda == null) return;
-    const r = await envio.ejecutar({ idPaciente: paciente, idAgenda: agenda, observacion: observacion.trim() || undefined });
+    const r = await envio.ejecutar({ idPaciente: paciente, idAgenda: agenda, horaInicio, observacion: observacion.trim() || undefined });
     if (r.ok) {
       const id = leerId(r.datos, 'idCita', 'id');
       toast.mostrar({ tipo: 'exito', titulo: 'Cita reservada', mensaje: id ? `Número de cita: ${id}` : undefined });
-      setIdAgenda('');
+      setFranja('');
       setObservacion('');
+      if (!esPaciente) setIdPaciente('');
+      bloques.recargar(); // el bloque reservado deja de aparecer como libre
     }
   }
 
   return (
-    <Card titulo="Reservar cita" descripcion="Use un bloque libre de la agenda del médico." icono={<CalendarPlus size={20} />}>
+    <Card titulo="Reservar cita" descripcion="Elija el médico, un horario libre y el paciente." icono={<CalendarPlus size={20} />}>
       <form className="form" onSubmit={enviar}>
         <FilaFormulario>
-          <CampoTexto
-            etiqueta="ID del paciente"
-            type="number"
-            min={1}
-            value={idPaciente}
-            onChange={(e) => setIdPaciente(e.target.value)}
-            readOnly={esPaciente}
-            ayuda={esPaciente ? 'Corresponde a su registro de paciente.' : undefined}
+          <CampoSeleccion
+            etiqueta="Médico"
+            value={idMedico}
+            onChange={(e) => {
+              setIdMedico(e.target.value);
+              setFranja('');
+            }}
             required
-          />
-          <CampoTexto
-            etiqueta="ID del bloque de agenda"
-            type="number"
-            min={1}
-            value={idAgenda}
-            onChange={(e) => setIdAgenda(e.target.value)}
-            ayuda="Puede elegirlo desde Agenda médica."
+          >
+            <option value="">{medicos.cargando ? 'Cargando médicos…' : 'Seleccione un médico…'}</option>
+            {(medicos.datos ?? []).map((m) => (
+              <option key={m.idMedico} value={m.idMedico}>
+                {m.nombre} — {m.especialidad}
+              </option>
+            ))}
+          </CampoSeleccion>
+
+          <CampoSeleccion
+            etiqueta="Horario libre"
+            value={franja}
+            onChange={(e) => setFranja(e.target.value)}
+            disabled={medicoNum == null}
+            ayuda={
+              medicoNum == null
+                ? 'Primero seleccione un médico.'
+                : bloques.datos && bloques.datos.length === 0
+                  ? 'El médico no tiene bloques libres.'
+                  : undefined
+            }
             required
-          />
+          >
+            <option value="">{bloques.cargando ? 'Cargando horarios…' : 'Seleccione un horario…'}</option>
+            {(bloques.datos ?? []).map((b) => (
+              <option key={`${b.idAgenda}|${b.fechaHoraInicio}`} value={`${b.idAgenda}|${b.fechaHoraInicio}`}>
+                {formatearFecha(b.fechaHoraInicio)} — {new Date(b.fechaHoraFin).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
+              </option>
+            ))}
+          </CampoSeleccion>
         </FilaFormulario>
-        <CampoArea
-          etiqueta="Observación"
-          maxLength={500}
-          rows={3}
-          value={observacion}
-          onChange={(e) => setObservacion(e.target.value)}
-        />
+
+        {esPaciente && (
+          <CampoTexto etiqueta="Paciente" value="Usted (su registro de paciente)" readOnly ayuda="La cita se reserva a su nombre." />
+        )}
+        {eligePaciente && (
+          <CampoSeleccion etiqueta="Paciente" value={idPaciente} onChange={(e) => setIdPaciente(e.target.value)} required>
+            <option value="">{pacientes.cargando ? 'Cargando pacientes…' : 'Seleccione un paciente…'}</option>
+            {(pacientes.datos ?? []).map((p) => (
+              <option key={p.idPaciente} value={p.idPaciente}>
+                {p.nombre} — Doc. {p.documento}
+              </option>
+            ))}
+          </CampoSeleccion>
+        )}
+        <CampoArea etiqueta="Observación" maxLength={500} rows={3} value={observacion} onChange={(e) => setObservacion(e.target.value)} />
         <div className="form__acciones">
           <Button type="submit" cargando={envio.enviando} disabled={paciente == null || agenda == null}>
             Reservar cita
           </Button>
         </div>
       </form>
+    </Card>
+  );
+}
+
+function MisCitas() {
+  const sesion = useSesion();
+  const esPaciente = sesion.rol === 'PACIENTE';
+  const [idPaciente, setIdPaciente] = useState('');
+  const elegido = enteroPositivo(idPaciente);
+  const pacientes = useConsulta(esPaciente ? null : (s) => citasService.pacientes(s), [esPaciente]);
+
+  // El paciente consulta siempre las suyas; recepción/admin eligen de quién.
+  const consultar = esPaciente || elegido != null;
+  const q = useConsulta(consultar ? (s) => citasService.misCitas(esPaciente ? undefined : (elegido ?? undefined), s) : null, [esPaciente, elegido]);
+
+  return (
+    <Card
+      titulo={esPaciente ? 'Mis citas' : 'Citas de un paciente'}
+      descripcion="Para cancelar una cita, use la opción de cancelación cuando esté disponible."
+      icono={<CalendarCheck size={20} />}
+    >
+      {!esPaciente && (
+        <div className="form-busqueda">
+          <CampoSeleccion etiqueta="Paciente" value={idPaciente} onChange={(e) => setIdPaciente(e.target.value)}>
+            <option value="">{pacientes.cargando ? 'Cargando pacientes…' : 'Seleccione un paciente…'}</option>
+            {(pacientes.datos ?? []).map((p) => (
+              <option key={p.idPaciente} value={p.idPaciente}>
+                {p.nombre} — Doc. {p.documento}
+              </option>
+            ))}
+          </CampoSeleccion>
+        </div>
+      )}
+      {consultar && (
+        <EstadoConsulta {...q} textoVacio="No hay citas registradas." alReintentar={q.recargar}>
+          {(citas) => (
+            <DataTable<CitaPaciente>
+              filas={citas}
+              claveFila={(c) => c.idCita}
+              columnas={[
+                { clave: 'idCita', titulo: 'Cita' },
+                { clave: 'fechaHoraInicio', titulo: 'Fecha y hora' },
+                { clave: 'medico', titulo: 'Médico' },
+                { clave: 'especialidad', titulo: 'Especialidad' },
+                {
+                  clave: 'estado',
+                  titulo: 'Estado',
+                  render: (c) => (
+                    <Badge tono={c.estado === 'Cancelada' ? 'peligro' : c.estado === 'Finalizada' ? 'exito' : 'info'}>{c.estado}</Badge>
+                  ),
+                },
+              ]}
+            />
+          )}
+        </EstadoConsulta>
+      )}
     </Card>
   );
 }

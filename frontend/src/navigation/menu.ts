@@ -38,9 +38,9 @@ export const MENU: ItemMenu[] = [
   {
     ruta: '/citas',
     etiqueta: 'Citas',
-    descripcion: 'Reservar y cancelar citas',
+    descripcion: 'Reservar y consultar citas',
     icono: CalendarPlus,
-    roles: ['RECEPCIONISTA', 'PACIENTE'],
+    roles: ['ADMINISTRADOR', 'RECEPCIONISTA', 'PACIENTE'],
   },
   {
     ruta: '/historias',
