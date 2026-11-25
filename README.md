@@ -8,6 +8,10 @@ proyectoClinica/
 └── frontend/   React 19 · Vite · TypeScript
 ```
 
+> **Los scripts de Oracle (`.sql`) ya no están en este repositorio.** Por acuerdo del equipo viven en
+> `github.com/sofia-barrera/base-de-datos-clinica` (esquema y datos, `PKG_CONSTANTES`, `PKG_SEGURIDAD`/`PKG_CONTEXTO`
+> y una carpeta por HU). Este repositorio solo tiene el backend y el frontend.
+
 ## Ejecutar
 
 Requisitos: Oracle XE en `localhost:1521/XE` con el esquema `PROYECTOPLSQL`, Java 21, Node 20+.
