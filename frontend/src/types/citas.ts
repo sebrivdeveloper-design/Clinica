@@ -15,6 +15,8 @@ export interface BloqueAgenda {
 export interface ReservaCitaRequest {
   idPaciente: number;
   idAgenda: number;
+  /** Inicio de la franja elegida (fechaHoraInicio del bloque libre). */
+  horaInicio?: string;
   observacion?: string;
 }
 

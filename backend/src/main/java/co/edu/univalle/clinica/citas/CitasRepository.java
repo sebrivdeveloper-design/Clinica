@@ -2,6 +2,7 @@ package co.edu.univalle.clinica.citas;
 
 import java.sql.CallableStatement;
 import java.sql.ResultSet;
+import java.sql.Timestamp;
 import java.sql.Types;
 import java.util.List;
 import java.util.Map;
@@ -46,16 +47,16 @@ public class CitasRepository {
         });
     }
 
-    /** PKG_CITAS.PRO_RESERVAR_CITA(idPaciente, idAgenda, observacion, OUT idCita). El COMMIT lo hace Oracle. */
+    /** PKG_CITAS.PRO_RESERVAR_CITA(idPaciente, idAgenda, horaInicio, OUT idCita). El COMMIT lo hace Oracle. La observación no se guarda al reservar. */
     public Map<String, Object> reservar(UsuarioSesion u, ReservaCitaRequest req) {
         return contexto.ejecutar(u, con -> {
             try (CallableStatement cs = con.prepareCall("{call PKG_CITAS.PRO_RESERVAR_CITA(?, ?, ?, ?)}")) {
                 cs.setLong(1, req.idPaciente());
                 cs.setLong(2, req.idAgenda());
-                if (req.observacion() == null || req.observacion().isBlank()) {
-                    cs.setNull(3, Types.VARCHAR);
+                if (req.horaInicio() == null) {
+                    cs.setNull(3, Types.TIMESTAMP);
                 } else {
-                    cs.setString(3, req.observacion().trim());
+                    cs.setTimestamp(3, Timestamp.valueOf(req.horaInicio()));
                 }
                 cs.registerOutParameter(4, Types.NUMERIC);
                 cs.execute();

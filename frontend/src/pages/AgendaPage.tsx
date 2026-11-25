@@ -62,7 +62,7 @@ export default function AgendaPage() {
             {(bloques) => (
               <DataTable<BloqueAgenda>
                 filas={bloques}
-                claveFila={(b) => b.idAgenda}
+                claveFila={(b) => `${b.idAgenda}|${b.fechaHoraInicio}`}
                 columnas={[
                   { clave: 'fechaHoraInicio', titulo: 'Inicio' },
                   { clave: 'fechaHoraFin', titulo: 'Fin' },
@@ -73,7 +73,7 @@ export default function AgendaPage() {
                         <Button
                           variante="secundario"
                           icono={<CalendarPlus size={16} />}
-                          onClick={() => navigate(`/citas?idAgenda=${b.idAgenda}&idMedico=${idMedico}`)}
+                          onClick={() => navigate(`/citas?idAgenda=${b.idAgenda}&horaInicio=${encodeURIComponent(b.fechaHoraInicio)}&idMedico=${idMedico}`)}
                         >
                           Reservar
                         </Button>

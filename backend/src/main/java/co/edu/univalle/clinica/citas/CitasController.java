@@ -1,6 +1,7 @@
 package co.edu.univalle.clinica.citas;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -31,6 +32,8 @@ public class CitasController {
     public record ReservaCitaRequest(
             @NotNull @Positive Long idPaciente,
             @NotNull @Positive Long idAgenda,
+            /** Inicio de la franja elegida (fechaHoraInicio de /api/agenda/disponible). Si es null, Oracle toma la primera libre del turno. */
+            LocalDateTime horaInicio,
             @Size(max = 500) String observacion) {
     }
 

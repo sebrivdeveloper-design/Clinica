@@ -52,7 +52,10 @@ function ReservarCita() {
   const eligePaciente = sesion.rol === 'ADMINISTRADOR' || sesion.rol === 'RECEPCIONISTA';
 
   const [idMedico, setIdMedico] = useState(params.get('idMedico') ?? '');
-  const [idAgenda, setIdAgenda] = useState(params.get('idAgenda') ?? '');
+  // Cada franja libre se identifica por turno + hora de inicio: "idAgenda|yyyy-MM-ddTHH:mm:ss"
+  const [franja, setFranja] = useState(
+    params.get('idAgenda') && params.get('horaInicio') ? `${params.get('idAgenda')}|${params.get('horaInicio')}` : '',
+  );
   // El paciente reserva a su nombre; recepción y administrador eligen el paciente de una lista.
   const [idPaciente, setIdPaciente] = useState(esPaciente && sesion.idEntidad != null ? String(sesion.idEntidad) : '');
   const [observacion, setObservacion] = useState('');
@@ -60,7 +63,8 @@ function ReservarCita() {
 
   const medicoNum = enteroPositivo(idMedico);
   const paciente = enteroPositivo(idPaciente);
-  const agenda = enteroPositivo(idAgenda);
+  const [idAgendaTxt, horaInicio] = franja.split('|');
+  const agenda = enteroPositivo(idAgendaTxt ?? '');
 
   const medicos = useConsulta((s) => citasService.medicos(s), []);
   const bloques = useConsulta(medicoNum != null ? (s) => citasService.agendaDisponible(medicoNum, s) : null, [medicoNum]);
@@ -69,11 +73,11 @@ function ReservarCita() {
   async function enviar(e: FormEvent) {
     e.preventDefault();
     if (paciente == null || agenda == null) return;
-    const r = await envio.ejecutar({ idPaciente: paciente, idAgenda: agenda, observacion: observacion.trim() || undefined });
+    const r = await envio.ejecutar({ idPaciente: paciente, idAgenda: agenda, horaInicio, observacion: observacion.trim() || undefined });
     if (r.ok) {
       const id = leerId(r.datos, 'idCita', 'id');
       toast.mostrar({ tipo: 'exito', titulo: 'Cita reservada', mensaje: id ? `Número de cita: ${id}` : undefined });
-      setIdAgenda('');
+      setFranja('');
       setObservacion('');
       if (!esPaciente) setIdPaciente('');
       bloques.recargar(); // el bloque reservado deja de aparecer como libre
@@ -89,7 +93,7 @@ function ReservarCita() {
             value={idMedico}
             onChange={(e) => {
               setIdMedico(e.target.value);
-              setIdAgenda('');
+              setFranja('');
             }}
             required
           >
@@ -103,8 +107,8 @@ function ReservarCita() {
 
           <CampoSeleccion
             etiqueta="Horario libre"
-            value={idAgenda}
-            onChange={(e) => setIdAgenda(e.target.value)}
+            value={franja}
+            onChange={(e) => setFranja(e.target.value)}
             disabled={medicoNum == null}
             ayuda={
               medicoNum == null
@@ -117,7 +121,7 @@ function ReservarCita() {
           >
             <option value="">{bloques.cargando ? 'Cargando horarios…' : 'Seleccione un horario…'}</option>
             {(bloques.datos ?? []).map((b) => (
-              <option key={b.idAgenda} value={b.idAgenda}>
+              <option key={`${b.idAgenda}|${b.fechaHoraInicio}`} value={`${b.idAgenda}|${b.fechaHoraInicio}`}>
                 {formatearFecha(b.fechaHoraInicio)} — {new Date(b.fechaHoraFin).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
               </option>
             ))}
